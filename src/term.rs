@@ -1308,29 +1308,6 @@ impl RichTerm {
             truncated
         }
     }
-
-    /// Checks if the given term is a chain of nested metavalues such that:
-    /// 1. At least one metavalue has the `optional` flag set
-    /// 2. The final value is undefined
-    ///
-    /// Used to determine if a record field is an optional field without definition, and should
-    /// thus be ignored.
-    pub fn is_empty_optional(&self) -> bool {
-        let mut is_opt = false;
-        let mut curr = self;
-
-        while let Term::MetaValue(meta) = curr.as_ref() {
-            is_opt = is_opt || meta.opt;
-
-            if let Some(ref next) = meta.value {
-                curr = next;
-            } else {
-                return is_opt;
-            }
-        }
-
-        false
-    }
 }
 
 impl From<RichTerm> for Term {

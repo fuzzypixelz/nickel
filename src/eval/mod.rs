@@ -878,5 +878,42 @@ pub fn subst(rt: RichTerm, initial_env: &Environment, env: &Environment) -> Rich
     }
 }
 
+/// Checks if the given term is a chain of nested metavalues such that:
+/// 1. At least one metavalue has the `optional` flag set
+/// 2. The final value is undefined
+///
+/// Used to determine if a record field is an optional field without definition, and should
+/// thus be ignored.
+pub fn is_empty_optional(rt: &RichTerm, env: &Environment) -> bool {
+    let mut is_opt = false;
+    let mut curr = rt;
+    let mut curr_env = env;
+
+    loop {
+        match curr.as_ref() {
+        Term::MetaValue(meta) => {
+           is_opt = is_opt || meta.opt;
+
+           if let Some(ref next) = meta.value {
+               curr = next;
+               println!("is_empty_optional(): unwrapping next metavalue. This is one is opt? : {}", meta.opt);
+           } else {
+               println!("is_empty_optional(): final empty value. Is_opt = {}", is_opt);
+               break is_opt;
+           }
+        }
+        Term::Var(id) => {
+            let Closure {
+                body: curr,
+                env: curr_env
+            } = env.get(id).unwrap().borrow();
+        }
+        _ => {
+            println!("is_empty_optional(): final non-empty value {}", curr);
+            break false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
