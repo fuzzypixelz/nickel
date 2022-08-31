@@ -101,7 +101,11 @@ pub fn serialize_record<S>(
 where
     S: Serializer,
 {
-    let mut entries: Vec<(_, _)> = map.iter().collect();
+    let mut entries: Vec<(_, _)> = map
+        .iter()
+        // Filtering out optional fields without a definition
+        .filter(|(_, t)| !t.is_empty_optional())
+        .collect();
     entries.sort_by_key(|(k, _)| *k);
 
     let mut map_ser = serializer.serialize_map(Some(entries.len()))?;
@@ -199,6 +203,12 @@ pub fn validate(format: ExportFormat, t: &RichTerm) -> Result<(), SerializationE
             MetaValue(term::MetaValue {
                 value: Some(ref t), ..
             }) => validate(format, t),
+            // Optional field without definition are accepted and just ignored.
+            MetaValue(term::MetaValue {
+                value: None,
+                opt: false,
+                ..
+            }) => Ok(()),
             _ => Err(SerializationError::NonSerializable(t.clone())),
         }
     }
