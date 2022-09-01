@@ -882,37 +882,59 @@ pub fn subst(rt: RichTerm, initial_env: &Environment, env: &Environment) -> Rich
 /// 1. At least one metavalue has the `optional` flag set
 /// 2. The final value is undefined
 ///
-/// Used to determine if a record field is an optional field without definition, and should
-/// thus be ignored.
+/// This method is supposed to be a quick peek. It is able to follow variables links, but within a
+/// limit (in the number of variables followed). This function is to determine if a record field is
+/// an optional field without definition, and should thus be ignored.
 pub fn is_empty_optional(rt: &RichTerm, env: &Environment) -> bool {
-    let mut is_opt = false;
-    let mut curr = rt;
-    let mut curr_env = env;
+    fn is_empty_optional_aux(rt: &RichTerm, env: &Environment, is_opt: bool, gas: u8) -> bool {
+        match rt.as_ref() {
+            Term::MetaValue(meta) => {
+                let is_opt = is_opt || meta.opt;
 
-    loop {
-        match curr.as_ref() {
-        Term::MetaValue(meta) => {
-           is_opt = is_opt || meta.opt;
-
-           if let Some(ref next) = meta.value {
-               curr = next;
-               println!("is_empty_optional(): unwrapping next metavalue. This is one is opt? : {}", meta.opt);
-           } else {
-               println!("is_empty_optional(): final empty value. Is_opt = {}", is_opt);
-               break is_opt;
-           }
-        }
-        Term::Var(id) => {
-            let Closure {
-                body: curr,
-                env: curr_env
-            } = env.get(id).unwrap().borrow();
-        }
-        _ => {
-            println!("is_empty_optional(): final non-empty value {}", curr);
-            break false
+                if let Some(ref next) = meta.value {
+                    println!(
+                        "is_empty_optional(): unwrapping next metavalue. This is one is opt? : {}",
+                        meta.opt
+                    );
+                    is_empty_optional_aux(next, env, is_opt, gas)
+                } else {
+                    println!(
+                        "is_empty_optional(): final empty value. Is_opt = {}",
+                        is_opt
+                    );
+                    is_opt
+                }
+            }
+            Term::Var(id) if gas > 0 => {
+                if let Some(closure) = env.get(id).as_ref().map(Thunk::borrow) {
+                    println!("is_empty_optional(): following var {}", id);
+                    is_empty_optional_aux(&closure.body, &closure.env, is_opt, gas - 1)
+                } else {
+                    println!(
+                        "is_empty_optional(): couldn't follow var {} (undefined/borrowed?)",
+                        id
+                    );
+                    false
+                }
+            }
+            Term::Var(id) => {
+                println!(
+                    "is_empty_optional(): var {} to follow, but non gas left",
+                    id
+                );
+                false
+            }
+            val => {
+                println!(
+                    "is_empty_optional(): final non-empty value {}",
+                    RichTerm::from(val.clone())
+                );
+                false
+            }
         }
     }
+
+    is_empty_optional_aux(rt, env, false, 8)
 }
 
 #[cfg(test)]
