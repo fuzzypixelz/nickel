@@ -93,6 +93,10 @@ pub fn merge(
     mode: MergeMode,
     call_stack: &CallStack,
 ) -> Result<Closure, EvalError> {
+    println!(
+        "\nMERGING \n {:?} \n PRETTY: {} \n ---WITH--- \n {:?} \n PRETTY: {}\n",
+        t1, t1, t2, t2
+    );
     // Merging a simple value and a metavalue is equivalent to first wrapping the simple value in a
     // new metavalue (with no attribute set excepted the value), and then merging the two
     let (t1, t2) = match (t1.term.is_metavalue(), t2.term.is_metavalue()) {
@@ -362,6 +366,7 @@ pub fn merge(
         // Merge put together the fields of records, and recursively merge
         // fields that are present in both terms
         (Term::Record(mut m1, attrs1), Term::Record(mut m2, attrs2)) => {
+            println!("MERGING RECORDS...");
             /* Terms inside m1 and m2 may capture variables of resp. env1 and env2.  Morally, we
              * need to store closures, or a merge of closures, inside the resulting record.  We use
              * the same trick as in the evaluation of the operator DynExtend, and replace each such
@@ -380,6 +385,10 @@ pub fn merge(
             let m2_values: Vec<_> = m2.values().cloned().collect();
 
             let (left, center, right) = hashmap::split(m1, m2);
+
+            println!("LEFT: \n {:#?} \n", left);
+            println!("CENTER: \n {:#?} \n", center);
+            println!("RIGHT: \n {:#?} \n", right);
 
             match mode {
                 MergeMode::Contract(mut lbl) if !attrs2.open && !left.is_empty() => {

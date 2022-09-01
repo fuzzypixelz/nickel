@@ -878,7 +878,7 @@ pub fn subst(rt: RichTerm, initial_env: &Environment, env: &Environment) -> Rich
     }
 }
 
-/// Checks if the given term is a chain of nested metavalues such that:
+/// Checks if the given term is a chain of nested and/or merged metavalues such that:
 /// 1. At least one metavalue has the `optional` flag set
 /// 2. The final value is undefined
 ///
@@ -886,29 +886,42 @@ pub fn subst(rt: RichTerm, initial_env: &Environment, env: &Environment) -> Rich
 /// limit (in the number of variables followed). This function is to determine if a record field is
 /// an optional field without definition, and should thus be ignored.
 pub fn is_empty_optional(rt: &RichTerm, env: &Environment) -> bool {
-    fn is_empty_optional_aux(rt: &RichTerm, env: &Environment, is_opt: bool, gas: u8) -> bool {
+    fn is_empty_optional_aux(rt: &RichTerm, env: &Environment, is_opt: bool, gas: &mut u8) -> bool {
         match rt.as_ref() {
             Term::MetaValue(meta) => {
                 let is_opt = is_opt || meta.opt;
 
                 if let Some(ref next) = meta.value {
                     println!(
-                        "is_empty_optional(): unwrapping next metavalue. This is one is opt? : {}",
+                        "is_empty_optional(): unwrapping next metavalue. This is one is opt? : {:?}",
                         meta.opt
                     );
                     is_empty_optional_aux(next, env, is_opt, gas)
                 } else {
                     println!(
-                        "is_empty_optional(): final empty value. Is_opt = {}",
+                        "is_empty_optional(): final empty value. Is_opt = {:?}",
                         is_opt
                     );
                     is_opt
                 }
             }
-            Term::Var(id) if gas > 0 => {
+            Term::Op2(BinaryOp::Merge(), ref t1, ref t2) => {
+                // The aggregated value for is_opt must follow the same logic as in the
+                // implementation of merge: a field is optional if both operands define it as
+                // optional.
+                //
+                // Thus the resulting value is an empty optional if either:
+                // - both branch are empty optionals
+                // - a wrapping metavalue is optional (is_opt is true at this point) and both
+                // branch are empty.
+                is_empty_optional_aux(t1, env, is_opt, gas)
+                    && is_empty_optional_aux(t2, env, is_opt, gas)
+            }
+            Term::Var(id) if *gas > 0 => {
                 if let Some(closure) = env.get(id).as_ref().map(Thunk::borrow) {
                     println!("is_empty_optional(): following var {}", id);
-                    is_empty_optional_aux(&closure.body, &closure.env, is_opt, gas - 1)
+                    *gas -= 1;
+                    is_empty_optional_aux(&closure.body, &closure.env, is_opt, gas)
                 } else {
                     println!(
                         "is_empty_optional(): couldn't follow var {} (undefined/borrowed?)",
@@ -926,7 +939,7 @@ pub fn is_empty_optional(rt: &RichTerm, env: &Environment) -> bool {
             }
             val => {
                 println!(
-                    "is_empty_optional(): final non-empty value {}",
+                    "is_empty_optional(): final non-empty value {:?}",
                     RichTerm::from(val.clone())
                 );
                 false
@@ -934,7 +947,9 @@ pub fn is_empty_optional(rt: &RichTerm, env: &Environment) -> bool {
         }
     }
 
-    is_empty_optional_aux(rt, env, false, 8)
+    // The total amount of gas is rather abritrary, but in any case, it ought to stay low: remember
+    // that is_empty_optional may be called on each field of a record when calling to `
+    is_empty_optional_aux(rt, env, false, &mut 8)
 }
 
 #[cfg(test)]

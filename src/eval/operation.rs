@@ -7,7 +7,7 @@
 //! On the other hand, the functions `process_unary_operation` and `process_binary_operation`
 //! receive evaluated operands and implement the actual semantics of operators.
 use super::{
-    callstack, merge,
+    callstack, is_empty_optional, merge,
     merge::{merge, MergeMode},
     stack::Stack,
     subst, CallStack, Closure, Environment,
@@ -480,7 +480,7 @@ fn process_unary_operation(
                         .into_iter()
                         // Ignore optional fields without definitions.
                         .filter_map(|(id, t)| {
-                            (!t.is_empty_optional()).then(|| id.to_string())
+                            (!is_empty_optional(&t, &env)).then(|| id.to_string())
                         })
                         .collect();
                     fields.sort();
@@ -510,7 +510,7 @@ fn process_unary_operation(
                         .into_iter()
                         // Ignore optional fields without definitions.
                         .filter_map(|(_, t)| {
-                            (!t.is_empty_optional()).then(|| t)
+                            (!is_empty_optional(&t, &env)).then(|| t)
                         })
                         .collect();
                     Ok(Closure {
@@ -623,8 +623,8 @@ fn process_unary_operation(
                         // As for `ArrayMap` (see above), we closurize the content of fields
                         let rec = rec
                             .into_iter()
-                            .map(|e| {
-                                let (id, t) = e;
+                            .filter(|(_, t)| !is_empty_optional(t, &env))
+                            .map(|(id, t)| {
                                 let pos = t.pos.into_inherited();
                                 (
                                     id.clone(),
@@ -690,7 +690,7 @@ fn process_unary_operation(
                     let terms = map
                         .into_iter()
                         // We ignore empty optional fields
-                        .filter(|(_, t)| !t.is_empty_optional())
+                        .filter(|(_, t)| !is_empty_optional(t, &env))
                         .map(|(id, t)| {
                             (
                                 Some(callstack::StackElem::Field {
@@ -702,7 +702,7 @@ fn process_unary_operation(
                                 t,
                             )
                         });
-                    Ok(seq_terms(terms, env, pos_op))
+                    Ok(seq_terms(terms, env.clone(), pos_op))
                 }
                 Term::Array(ts, _) if !ts.is_empty() => {
                     Ok(seq_terms(ts.into_iter().map(|t| (None, t)), env, pos_op))
@@ -1381,6 +1381,7 @@ fn process_binary_operation(
                         env: env1,
                     }),
                     Term::Record(..) => {
+                        println!("Assume: record case ({})", &RichTerm::from((*t1).clone()));
                         let mut new_env = Environment::new();
                         let closurized = RichTerm {
                             term: t1,
@@ -1388,7 +1389,7 @@ fn process_binary_operation(
                         }
                         .closurize(&mut new_env, env1);
 
-                        // Convert the record to the function `fun l x => MergeContract l x
+                        // Convert the record to the function `fun l x => MergeContract l x t1
                         // contract`.
                         let body = mk_fun!(
                             "l",
@@ -1750,7 +1751,7 @@ fn process_binary_operation(
                             let mut static_map = static_map;
                             let as_var = clos.body.closurize(&mut env2, clos.env);
                             match static_map.insert(Ident::from(id), as_var) {
-                                Some(t) if !t.is_empty_optional() => Err(EvalError::Other(format!("$[ .. ]: tried to extend record with the field {}, but it already exists", id), pos_op)),
+                                Some(t) if !is_empty_optional(&t, &env2) => Err(EvalError::Other(format!("$[ .. ]: tried to extend record with the field {}, but it already exists", id), pos_op)),
                                 _ => Ok(Closure {
                                     body: Term::Record(static_map, attrs).into(),
                                     env: env2,
@@ -1787,7 +1788,7 @@ fn process_binary_operation(
                             let mut static_map = static_map;
                             let fetched = static_map.remove(&Ident::from(&id));
                             if fetched.is_none()
-                               || matches!(fetched, Some(t) if t.is_empty_optional()) {
+                               || matches!(fetched, Some(t) if is_empty_optional(&t, &env2)) {
                                 Err(EvalError::FieldMissing(
                                     id,
                                     String::from("(-$)"),
@@ -1835,7 +1836,7 @@ fn process_binary_operation(
                 Term::Str(id) => {
                     if let Term::Record(map, _) = &*t2 {
                         Ok(Closure::atomic_closure(RichTerm::new(
-                            Term::Bool(matches!(map.get(&Ident::from(id)), Some(t) if !t.is_empty_optional())),
+                            Term::Bool(matches!(map.get(&Ident::from(id)), Some(t5) if !is_empty_optional(t5, &env2))),
                             pos_op_inh,
                         )))
                     } else {
@@ -2333,6 +2334,11 @@ fn process_nary_operation(
             ) = args_iter.next().unwrap();
             debug_assert!(args_iter.next().is_none());
 
+            println!(
+                "Merge contract:\nOPERAND: {}\nCONTRACT: {}\n",
+                &RichTerm::from((*t2).clone()),
+                &RichTerm::from((*t3).clone())
+            );
             match_sharedterm! {t1, with {
                     Term::Lbl(lbl) => {
                         merge(
@@ -2426,8 +2432,8 @@ fn eq(env: &mut Environment, c1: Closure, c2: Closure) -> EqResult {
             let (left, center, right) = merge::hashmap::split(m1, m2);
 
             // As for other record operations, we ignore optional fields without a definition.
-            if !left.values().all(RichTerm::is_empty_optional)
-                || !right.values().all(RichTerm::is_empty_optional)
+            if !left.values().all(|rt| is_empty_optional(&rt, &env1))
+                || !right.values().all(|rt| is_empty_optional(&rt, &env2))
             {
                 EqResult::Bool(false)
             } else if center.is_empty() {
